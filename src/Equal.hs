@@ -13,35 +13,46 @@ import Unbound.LocallyNameless hiding (Data, Refl)
 import Control.Monad.Error (catchError, zipWithM, zipWithM_)
 import Control.Applicative ((<$>))
 
+eqReflect :: Term -> Term -> [Decl] -> TcMonad ()
+eqReflect a b gamma = go gamma where
+  go [] = err [DS "No witness for", DD (TyEq a b), DS "in context:", DD gamma]
+  go (x:gs) =
+    case x of
+      Sig _ (TyEq c d) -> (equate' False a c >> equate' False b d >> return ()) `catchError` const (go gs)
+      _ -> go gs
+
+equate :: Term -> Term -> TcMonad ()
+equate = equate' True
 
 -- | compare two expressions for equality
 -- ignores type annotations during comparison
 -- throws an error if the two types cannot be matched up
-equate :: Term -> Term -> TcMonad ()
-equate t1 t2 = do
+equate' :: Bool -> Term -> Term -> TcMonad ()
+equate' shouldReflect t1 t2 = let recurse = equate' shouldReflect in do
   n1 <- whnf t1
   n2 <- whnf t2
+
   case (n1, n2) of
     (Var x,  Var y)  | x == y -> return ()
     (Lam ep1 bnd1, Lam ep2 bnd2) | ep1 == ep2 -> do
       Just (x, b1, _, b2) <- unbind2 bnd1 bnd2
-      equate b1 b2
+      recurse b1 b2
     (App a1 a2, App b1 b2) -> do
-      equate a1 b1
+      recurse a1 b1
       equateArgs a2 b2
     (Type i, Type j) | i == j -> return ()
     (Pi ep1 bnd1, Pi ep2 bnd2) | ep1 == ep2 -> do
       Just ((x, unembed -> tyA1), tyB1,
             (_, unembed -> tyA2), tyB2) <- unbind2 bnd1 bnd2
-      equate tyA1 tyA2
-      equate tyB1 tyB2
+      recurse tyA1 tyA2
+      recurse tyB1 tyB2
 
-    (Ann at1 _, at2) -> equate at1 at2
-    (at1, Ann at2 _) -> equate at1 at2
-    (Paren at1, at2) -> equate at1 at2
-    (at1, Paren at2) -> equate at1 at2
-    (Pos _ at1, at2) -> equate at1 at2
-    (at1, Pos _ at2) -> equate at1 at2
+    (Ann at1 _, at2) -> recurse at1 at2
+    (at1, Ann at2 _) -> recurse at1 at2
+    (Paren at1, at2) -> recurse at1 at2
+    (at1, Paren at2) -> recurse at1 at2
+    (Pos _ at1, at2) -> recurse at1 at2
+    (at1, Pos _ at2) -> recurse at1 at2
 
     (TrustMe _, TrustMe _) ->  return ()
 
@@ -53,78 +64,79 @@ equate t1 t2 = do
     (LitBool b1, LitBool b2) | b1 == b2 -> return ()
 
     (If a1 b1 c1 _, If a2 b2 c2 _) ->
-      equate a1 a2 >> equate b1 b2 >> equate c1 c2
+      recurse a1 a2 >> recurse b1 b2 >> recurse c1 c2
 
     (Let ep1 bnd1, Let ep2 bnd2) | ep1 == ep2 -> do
       Just ((x,unembed -> rhs1), body1,
             (_,unembed -> rhs2), body2) <- unbind2 bnd1 bnd2
-      equate rhs1 rhs2
-      equate body1 body2
+      recurse rhs1 rhs2
+      recurse body1 body2
 
     (Sigma bnd1, Sigma bnd2) -> do
       Just ((x, unembed -> tyA1), tyB1,
             (_, unembed -> tyA2), tyB2) <- unbind2 bnd1 bnd2
-      equate tyA1 tyA2
-      equate tyB1 tyB2
+      recurse tyA1 tyA2
+      recurse tyB1 tyB2
 
     (Prod a1 b1 _, Prod a2 b2 _) -> do
-      equate a1 a2
-      equate b1 b2
+      recurse a1 a2
+      recurse b1 b2
 
     (Pcase s1 bnd1 _, Pcase s2 bnd2 _) -> do
-      equate s1 s2
+      recurse s1 s2
       Just ((x,y), body1, _, body2) <- unbind2 bnd1 bnd2
-      equate body1 body2
+      recurse body1 body2
 
-    (TyEq a b, TyEq c d) -> equate a c >> equate b d
+    (TyEq a b, TyEq c d) -> recurse a c >> recurse b d
 
     (Refl _,  Refl _) -> return ()
 
-    (Subst at1 _ _, at2) -> equate at1 at2
+    (Subst at1 _ _, at2) -> recurse at1 at2
 
-    (at1, Subst at2 _ _) -> equate at1 at2
+    (at1, Subst at2 _ _) -> recurse at1 at2
 
     (Contra a1 _, Contra a2 _) -> return ()
 
 
     (TCon c1 ts1, TCon c2 ts2) | c1 == c2 ->
-      zipWithM_ equate ts1 ts2
+      zipWithM_ recurse ts1 ts2
     (DCon d1 a1 _, DCon d2 a2 _) | d1 == d2 ->
       zipWithM_ equateArgs a1 a2
     (Case s1 brs1 ann1, Case s2 brs2 ann2)
       | length brs1 == length brs2 -> do
-      equate s1 s2
+      recurse s1 s2
       -- require branches to be in the same order
       -- on both expressions
       let matchBr (Match bnd1) (Match bnd2) = do
             mpb <- unbind2 bnd1 bnd2
             case mpb of
               Just (p1, a1, p2, a2) | p1 == p2 -> do
-                equate a1 a2
+                recurse a1 a2
               _ -> err [DS "Cannot match branches in",
                               DD n1, DS "and", DD n2]
       zipWithM_ matchBr brs1 brs2
 
     (Smaller a b, Smaller c d) ->
-      equate a c >> equate b d
+      recurse a c >> recurse b d
 
     (Ind ep1 bnd1 ann1, Ind ep2 bnd2 ann2) | ep1 == ep2 -> do
       Just ((f,x), b1, _, b2) <- unbind2 bnd1 bnd2
-      equate b1 b1
+      recurse b1 b1
 
     (PiC ep1 bnd1, PiC ep2 bnd2) | ep1 == ep2 -> do
       Just ((x, unembed -> tyA1), (c1, tyB1),
             (_, unembed -> tyA2), (c2, tyB2)) <- unbind2 bnd1 bnd2
-      equate tyA1 tyA2
-      equate c1 c2
-      equate tyB1 tyB2
-
+      recurse tyA1 tyA2
+      recurse c1 c2
+      recurse tyB1 tyB2
 
     (_,_) -> do
       gamma <- getLocalCtx
-      err [DS "Expected", DD t2, DS "which normalizes to", DD n2,
-           DS "but found", DD t1,  DS "which normalizes to", DD n1,
-           DS "in context:", DD gamma]
+      if shouldReflect
+        then eqReflect n1 n2 gamma `catchError` const (eqReflect n2 n1 gamma)
+        else err [DS "Expected", DD t2, DS "which normalizes to", DD n2,
+                  DS "but found", DD t1,  DS "which normalizes to", DD n1,
+                  DS "in context:", DD gamma]
 
 -- | Note: ignores erased args during comparison
 equateArgs :: Arg -> Arg -> TcMonad ()

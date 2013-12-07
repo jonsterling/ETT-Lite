@@ -12,3 +12,7 @@ trans : [A:Type] -> [x:A] -> [y:A] -> [z:A] -> (x = z) -> (z = y) -> (x = y)
 trans = \[A][x][y][z] pf1 pf2 .
   subst pf1 by pf2 at h. x = h
 
+-- propositional equality is reflected into definitional equality (ETT)
+
+reflection : [A:Type] -> [B:Type] -> [x:A] -> [y:B] -> (p : A = B) -> (x = y) -> (x = y)
+reflection = \[A][B][x][y] p q . refl
