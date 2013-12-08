@@ -14,5 +14,6 @@ trans = \[A][x][y][z] pf1 pf2 .
 
 -- propositional equality is reflected into definitional equality (ETT)
 
-reflection : [A:Type] -> [B:Type] -> [x:A] -> [y:B] -> (p : A = B) -> (x = y) -> (x = y)
+reflection : [A:Type] -> [B:Type] -> [x:A] -> [y:B] -> (A = B) -> (x = y) -> (x = y)
 reflection = \[A][B][x][y] p q . refl
+
