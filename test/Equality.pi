@@ -1,10 +1,9 @@
 module Equality where
 
--- equality is symmetric
+-- equality is symmetric (definitionally so)
 
 sym : [A:Type] -> [x:A] -> [y:A] -> (x = y) -> y = x
-sym = \[A][x][y] pf .
-  subst refl by pf at h. h = x
+sym = \[A][x][y] pf . refl
 
 -- and transitive
 
