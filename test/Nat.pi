@@ -45,8 +45,7 @@ sm_eq_Sn__m_eq_n = \m n sm_eq_Sn .
 
 
 m_eq_n_Sm_eq_Sn : (m:Nat) -> (n:Nat) -> m = n -> (Succ m = Succ n)
-m_eq_n_Sm_eq_Sn = \m n pf .
-  subst refl by pf at x. (Succ m = Succ x)
+m_eq_n_Sm_eq_Sn = \m n pf . refl
 
 nat_eq : Nat -> Nat -> Bool
 ind nat_eq x = \ y .
