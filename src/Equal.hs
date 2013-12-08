@@ -13,13 +13,21 @@ import Unbound.LocallyNameless hiding (Data, Refl)
 import Control.Monad.Error (catchError, zipWithM, zipWithM_)
 import Control.Applicative ((<$>))
 
+(<|>) :: TcMonad a -> TcMonad a -> TcMonad a
+x <|> y = catchError x (const y)
+
 eqReflect :: Term -> Term -> [Decl] -> TcMonad ()
 eqReflect a b gamma = go gamma where
   go [] = err [DS "No witness for", DD (TyEq a b), DS "in context:", DD gamma]
   go (x:gs) =
     case x of
-      Sig _ (TyEq c d) -> (equate' False a c >> equate' False b d >> return ()) `catchError` const (go gs)
+      Sig _ t -> equatesSymmetric t a b
+             <|> go gs
       _ -> go gs
+
+  equatesSymmetric t x y = equate' False t (TyEq x y)
+                        <|> equate' False t (TyEq y x)
+
 
 equate :: Term -> Term -> TcMonad ()
 equate = equate' True
@@ -133,7 +141,7 @@ equate' shouldReflect t1 t2 = let recurse = equate' shouldReflect in do
     (_,_) -> do
       gamma <- getLocalCtx
       if shouldReflect
-        then eqReflect n1 n2 gamma `catchError` const (eqReflect n2 n1 gamma)
+        then eqReflect n1 n2 gamma
         else err [DS "Expected", DD t2, DS "which normalizes to", DD n2,
                   DS "but found", DD t1,  DS "which normalizes to", DD n1,
                   DS "in context:", DD gamma]
