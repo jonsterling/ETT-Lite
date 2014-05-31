@@ -24,22 +24,22 @@ getEquations (Sig _ (TyEq x y) : gamma) = (x,y) : getEquations gamma
 getEquations (_ : gamma) = getEquations gamma
 getEquations [] = []
 
-equationsWithEndpoint :: [(Term, Term)] -> Term -> TcMonad [Term]
-equationsWithEndpoint ((a,b) : es) x = do
+termsEqualTo :: [(Term, Term)] -> Term -> TcMonad [Term]
+termsEqualTo ((a,b) : es) x = do
   eqns <- (equate' False a x >> return [a,b]) `catchError` \_ ->
     (equate' False b x >> return [a,b]) `catchError` \_ ->
       return []
-  rest <- equationsWithEndpoint es x
+  rest <- termsEqualTo es x
   return $ eqns ++ rest
-equationsWithEndpoint _ x = return []
+termsEqualTo _ x = return []
 
 combinations :: [a] -> [a] -> [(a,a)]
 combinations xs ys = foldr (\x m -> map (x,) ys ++ m) [] xs
 
 findEquation :: [(Term, Term)] -> Term -> Term -> TcMonad ()
 findEquation es x y = do
-  xeqs <- equationsWithEndpoint es x
-  yeqs <- equationsWithEndpoint es y
+  xeqs <- termsEqualTo es x
+  yeqs <- termsEqualTo es y
   let combos = combinations xeqs yeqs
   matches <- flip filterM combos $ \(a,b) ->
     (equate' False a b >> return True) `catchError` \_ ->
