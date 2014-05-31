@@ -1,16 +1,16 @@
 module Equality where
 
--- equality is symmetric (definitionally so)
+-- Judgmental equality is coextensive with propositional equality
 
 sym : (A:Type) -> (x:A) -> (y:A) -> (x = y) -> y = x
 sym = \A x y pf . refl
 
--- and transitive
-
 trans : (A:Type) -> (x:A) -> (y:A) -> (z:A) -> (x = z) -> (z = y) -> (x = y)
 trans = \A x y z pf1 pf2 . refl
 
--- propositional equality is reflected into definitional equality (ETT)
+transport : (A:Type) -> (B: A -> Type) -> (f : (x:A) -> B x) -> (a:A) -> (b:A) -> a = b -> f a = f b
+transport = \A B f a b p . refl
+
 reflection : (A:Type) -> (B:Type) -> (A = B) -> A -> B
 reflection = \A B p x. x
 
