@@ -14,9 +14,12 @@ transport = \A B f a b p . refl
 reflection : (A:Type) -> (B:Type) -> (A = B) -> A -> B
 reflection = \A B p x. x
 
-
 eta : (A:Type) -> (B:Type) -> (f : A -> B) -> f = (\x. f x)
 eta = \A B f. refl
+
+-- We're not yet strong enough to prove funext. Need some more laws to hold judgmentally for lambdas.
+-- Ideally, we'd have equality defined by recursion on the structure of types, in the manner of Nuprl
+-- anyway.
 
 -- funext : (A:Type) -> (B : Type) -> (f : A -> B) -> (g : A -> B) -> (x : A) -> (p : f x = g x) -> f = g
 -- funext = \A B f g x p. let pf = TRUSTME
