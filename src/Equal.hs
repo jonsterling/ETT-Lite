@@ -41,14 +41,14 @@ equate' shouldReflect t1 t2 = let recurse = equate' shouldReflect in do
 
   case (n1, n2) of
     (Var x,  Var y)  | x == y -> return ()
-    (Lam ep1 bnd1, Lam ep2 bnd2) | ep1 == ep2 -> do
+    (Lam bnd1, Lam bnd2) -> do
       Just (x, b1, _, b2) <- unbind2 bnd1 bnd2
       recurse b1 b2
     (App a1 a2, App b1 b2) -> do
       recurse a1 b1
       equateArgs a2 b2
     (Type i, Type j) | i == j -> return ()
-    (Pi ep1 bnd1, Pi ep2 bnd2) | ep1 == ep2 -> do
+    (Pi bnd1, Pi bnd2) -> do
       Just ((x, unembed -> tyA1), tyB1,
             (_, unembed -> tyA2), tyB2) <- unbind2 bnd1 bnd2
       recurse tyA1 tyA2
@@ -73,7 +73,7 @@ equate' shouldReflect t1 t2 = let recurse = equate' shouldReflect in do
     (If a1 b1 c1 _, If a2 b2 c2 _) ->
       recurse a1 a2 >> recurse b1 b2 >> recurse c1 c2
 
-    (Let ep1 bnd1, Let ep2 bnd2) | ep1 == ep2 -> do
+    (Let bnd1, Let bnd2) -> do
       Just ((x,unembed -> rhs1), body1,
             (_,unembed -> rhs2), body2) <- unbind2 bnd1 bnd2
       recurse rhs1 rhs2
@@ -126,11 +126,11 @@ equate' shouldReflect t1 t2 = let recurse = equate' shouldReflect in do
     (Smaller a b, Smaller c d) ->
       recurse a c >> recurse b d
 
-    (Ind ep1 bnd1 ann1, Ind ep2 bnd2 ann2) | ep1 == ep2 -> do
+    (Ind bnd1 ann1, Ind bnd2 ann2) -> do
       Just ((f,x), b1, _, b2) <- unbind2 bnd1 bnd2
       recurse b1 b1
 
-    (PiC ep1 bnd1, PiC ep2 bnd2) | ep1 == ep2 -> do
+    (PiC bnd1, PiC bnd2) -> do
       Just ((x, unembed -> tyA1), (c1, tyB1),
             (_, unembed -> tyA2), (c2, tyB2)) <- unbind2 bnd1 bnd2
       recurse tyA1 tyA2
@@ -145,13 +145,8 @@ equate' shouldReflect t1 t2 = let recurse = equate' shouldReflect in do
                   DS "but found", DD t1,  DS "which normalizes to", DD n1,
                   DS "in context:", DD gamma]
 
--- | Note: ignores erased args during comparison
 equateArgs :: Arg -> Arg -> TcMonad ()
-equateArgs (Arg Runtime t1) (Arg Runtime t2) = do
-  equate t1 t2
-equateArgs a@(Arg Erased t1) (Arg Erased t2) = return ()
-equateArgs a1 a2 = err [DS "Arguments do not match",
-                       DD a1, DS "and", DD a2]
+equateArgs (Arg t1) (Arg t2) = equate t1 t2
 
 -------------------------------------------------------
 
@@ -168,16 +163,16 @@ ensureType ty = do
 -- (or could be normalized to be such) and return the components of
 -- the type.
 -- Throws an error if this is not the case.
-ensurePi :: Term -> TcMonad (Epsilon, TName, Term, Term, Maybe Term)
+ensurePi :: Term -> TcMonad (TName, Term, Term, Maybe Term)
 ensurePi ty = do
   nf <- whnf ty
   case nf of
-    (Pi ep bnd) -> do
+    (Pi bnd) -> do
       ((x, unembed -> tyA), tyB) <- unbind bnd
-      return (ep, x, tyA, tyB, Nothing)
-    (PiC ep bnd) -> do
+      return (x, tyA, tyB, Nothing)
+    (PiC bnd) -> do
       ((x, unembed -> tyA), (constr, tyB)) <- unbind bnd
-      return (ep, x, tyA, tyB, Just constr)
+      return (x, tyA, tyB, Just constr)
     _ -> err [DS "Expected a function type, instead found", DD nf]
 
 
@@ -218,15 +213,15 @@ whnf (Var x) = do
     (Just d) -> whnf d
     _ -> return (Var x)
 
-whnf (App t1 arg@(Arg _ t2)) = do
+whnf (App t1 arg@(Arg t2)) = do
   nf <- whnf t1
   case nf of
-    (Lam _ bnd) -> do
+    (Lam bnd) -> do
       ((x,_),body) <- unbind bnd
       whnf (subst x t2 body)
         -- only unfold applications of inductive definitions
     -- if the argument is a data constructor.
-    (Ind _ bnd _) -> do
+    (Ind bnd _) -> do
       nf2 <- whnf t2
       case nf2 of
         (DCon _ _ _) -> do
@@ -261,7 +256,7 @@ whnf t@(Paren x)   =
 whnf t@(Pos _ x)   =
   err [DS "Unexpected position arg to whnf:", DD t]
 
-whnf (Let ep bnd)  = do
+whnf (Let bnd)  = do
   ((x,unembed->rhs),body) <- unbind bnd
   whnf (subst x rhs body)
 
@@ -279,7 +274,7 @@ whnf (Case scrut mtchs annot) = do
     (DCon d args _) -> f mtchs where
       f (Match bnd : alts) = (do
           (pat, br) <- unbind bnd
-          ss <- patternMatches (Arg Runtime nf) pat
+          ss <- patternMatches (Arg nf) pat
           whnf (substs ss br))
             `catchError` \ _ -> f alts
       f [] = err $ [DS "Internal error: couldn't find a matching",
@@ -295,14 +290,12 @@ whnf tm = return tm
 -- | Determine whether the pattern matches the argument
 -- If so return the appropriate substitution
 patternMatches :: Arg -> Pattern -> TcMonad [(TName, Term)]
-patternMatches (Arg _ t) (PatVar x) = return [(x, t)]
-patternMatches (Arg Runtime t) pat@(PatCon d' pats) = do
+patternMatches (Arg t) (PatVar x) = return [(x, t)]
+patternMatches (Arg t) pat@(PatCon d' pats) = do
   nf <- whnf t
   case nf of
     (DCon d args _) | d == d' ->
-       concat <$> zipWithM patternMatches args (map fst pats)
+       concat <$> zipWithM patternMatches args pats
     _ -> err [DS "arg", DD nf, DS "doesn't match pattern", DD pat]
-patternMatches (Arg Erased _) pat@(PatCon _ _) = do
-  err [DS "Cannot match against irrelevant args"]
 
 
