@@ -1,6 +1,7 @@
 {- PiForall language, OPLSS, Summer 2013 -}
 
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -Wall -fno-warn-unused-matches #-}
 
 -- | Compare two terms for equality
@@ -10,23 +11,47 @@ import Syntax
 import Environment
 
 import Unbound.LocallyNameless hiding (Data, Refl)
-import Control.Monad.Error (catchError, zipWithM, zipWithM_)
+import Control.Monad.Error (catchError)
 import Control.Applicative ((<$>))
+import Control.Monad
+import Data.List
 
 (<|>) :: TcMonad a -> TcMonad a -> TcMonad a
 x <|> y = catchError x (const y)
 
-proofSearch :: [Decl] -> Term -> TcMonad ()
-proofSearch gamma p = go gamma where
-  go [] = err [DS "No witness for", DD p, DS "in context:", DD gamma]
-  go (x:gs) =
-    case x of
-      Sig _ t -> equate' False t p <|> go gs
-      _ -> go gs
+getEquations :: [Decl] -> [(Term, Term)]
+getEquations (Sig _ (TyEq x y) : gamma) = (x,y) : getEquations gamma
+getEquations (_ : gamma) = getEquations gamma
+getEquations [] = []
+
+equationsWithEndpoint :: [(Term, Term)] -> Term -> TcMonad [Term]
+equationsWithEndpoint ((a,b) : es) x = do
+  eqns <- (equate' False a x >> return [a,b]) `catchError` \_ ->
+    (equate' False b x >> return [a,b]) `catchError` \_ ->
+      return []
+  rest <- equationsWithEndpoint es x
+  return $ eqns ++ rest
+equationsWithEndpoint _ x = return []
+
+combinations :: [a] -> [a] -> [(a,a)]
+combinations xs ys = foldr (\x m -> map (x,) ys ++ m) [] xs
+
+findEquation :: [(Term, Term)] -> Term -> Term -> TcMonad ()
+findEquation es x y = do
+  xeqs <- equationsWithEndpoint es x
+  yeqs <- equationsWithEndpoint es y
+  let combos = combinations xeqs yeqs
+  matches <- flip filterM combos $ \(a,b) ->
+    (equate' False a b >> return True) `catchError` \_ ->
+      return False
+
+  case matches of
+    [] -> err [DS "No equation for ", DD x, DS "=", DD y, DS "in context"]
+    _ -> return ()
+
 
 eqReflect :: [Decl] -> Term -> Term -> TcMonad ()
-eqReflect g x y = proofSearch g (TyEq x y)
-               <|> proofSearch g (TyEq y x)
+eqReflect g x y = findEquation (getEquations g) x y
 
 equate :: Term -> Term -> TcMonad ()
 equate = equate' True
@@ -44,6 +69,11 @@ equate' shouldReflect t1 t2 = let recurse = equate' shouldReflect in do
     (Lam bnd1, Lam bnd2) -> do
       Just (x, b1, _, b2) <- unbind2 bnd1 bnd2
       recurse b1 b2
+    (v, Lam bnd) -> do
+      (x, b) <- unbind bnd
+      case b of
+        App f (Arg x') -> recurse f v
+        _ -> err [DS "Couldn't apply eta rule"]
     (App a1 a2, App b1 b2) -> do
       recurse a1 b1
       equateArgs a2 b2
